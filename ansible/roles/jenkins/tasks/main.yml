@@ -1,0 +1,121 @@
+- name: Update apt cache
+  apt:
+    update_cache: yes
+  ignore_errors: yes
+  become: true
+
+- name: Clean apt cache
+  shell: |
+    rm -f /etc/apt/sources.list.d/jenkins.list /etc/apt/sources.list.d/jenkins-*.list
+    apt-get clean
+  become: true
+
+- name: Install required packages
+  apt:
+    name:
+      - openjdk-17-jdk
+      - wget
+      - gnupg
+      - curl
+    state: present
+  become: true
+
+- name: Set up Jenkins repository (with trusted flag workaround)
+  shell: |
+    mkdir -p /usr/share/keyrings
+    wget -q -O - https://pkg.jenkins.io/debian-stable/jenkins.io.key > /tmp/jenkins.key
+    gpg --no-default-keyring --keyring /usr/share/keyrings/jenkins-keyring.gpg --import /tmp/jenkins.key || true
+    echo "deb [trusted=yes] https://pkg.jenkins.io/debian-stable binary/" > /etc/apt/sources.list.d/jenkins.list
+  become: true
+  timeout: 60
+  ignore_errors: yes
+
+- name: Update apt cache after adding Jenkins
+  apt:
+    update_cache: yes
+  become: true
+  ignore_errors: yes
+
+- name: Install Jenkins
+  apt:
+    name: jenkins
+    state: present
+  become: true
+  ignore_errors: yes
+
+- name: Wait for Jenkins installation
+  pause:
+    seconds: 15
+
+- name: Ensure Jenkins is started
+  service:
+    name: jenkins
+    state: started
+    enabled: yes
+  become: true
+  ignore_errors: yes
+
+- name: Check Jenkins service status
+  command: systemctl status jenkins
+  register: jenkins_status
+  become: true
+  changed_when: false
+  failed_when: false
+
+- name: Debug Jenkins service status
+  debug:
+    msg: "{{ jenkins_status.stdout_lines }}"
+
+- name: Check Jenkins logs for errors
+  shell: journalctl -xeu jenkins.service -n 50 2>/dev/null || dmesg | tail -50
+  register: jenkins_logs
+  become: true
+  changed_when: false
+  ignore_errors: yes
+
+- name: Debug Jenkins logs
+  debug:
+    msg: "{{ jenkins_logs.stdout_lines }}"
+
+- name: Check if Java is installed
+  shell: which java && java -version
+  register: java_check
+  changed_when: false
+  ignore_errors: yes
+
+- name: Debug Java check
+  debug:
+    msg: "{{ java_check.stdout_lines }}"
+
+- name: Check Jenkins directory permissions
+  shell: ls -la /var/lib/jenkins/ 2>/dev/null | head -20 || echo "Jenkins directory not found"
+  register: jenkins_dir
+  become: true
+  changed_when: false
+  ignore_errors: yes
+
+- name: Debug Jenkins directory
+  debug:
+    msg: "{{ jenkins_dir.stdout_lines }}"
+
+- name: Check Jenkins package version
+  shell: dpkg -l | grep jenkins
+  register: jenkins_pkg
+  changed_when: false
+  ignore_errors: yes
+
+- name: Debug Jenkins package
+  debug:
+    msg: "{{ jenkins_pkg.stdout }}"
+
+- name: Wait for Jenkins to start
+  wait_for:
+    port: 8080
+    delay: 10
+    timeout: 120
+
+- name: Get initial admin password
+  command: cat /var/lib/jenkins/secrets/initialAdminPassword
+  register: jenkins_admin_password
+  changed_when: false
+  become: true

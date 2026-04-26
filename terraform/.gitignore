@@ -1,0 +1,42 @@
+# Terraform files
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
+*.iml
+
+# Environment-specific overrides
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Log files
+*.log
+
+# Mac
+.DS_Store
+
+# Backup files
+*.backup
+*.bak
+*.tfstate.backup
+
+# Plan files
+tfplan
+
+# Sensitive files
+*.pem
+*.key
+.env
+.envrc
+
+# Plan files (optional - use if you want to track plans)
+# *.tfplan

@@ -1,0 +1,62 @@
+---
+# filepath: /home/ubuntu/PRATICE/microservices-project/ansible/jenkins-playbook.yml
+- name: Install and Configure Jenkins
+  hosts: jenkins_server
+  become: yes
+  vars:
+    jenkins_version: "2.426.1"
+    jenkins_port: 8080
+    jenkins_admin_user: admin
+    jenkins_home: /var/lib/jenkins
+  
+  roles:
+    - jenkins
+  
+  post_tasks:
+    - name: Install Docker
+      apt:
+        name:
+          - docker.io
+          - python3-pip
+        state: present
+      become: true
+    
+    - name: Install AWS CLI
+      pip:
+        name: awscli
+        state: present
+    
+    - name: Install kubectl
+      get_url:
+        url: https://dl.k8s.io/release/v1.28.0/bin/linux/amd64/kubectl
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+    
+    - name: Install Terraform
+      get_url:
+        url: https://releases.hashicorp.com/terraform/1.6.0/terraform_1.6.0_linux_amd64.zip
+        dest: /tmp/terraform.zip
+      register: terraform_download
+    
+    - name: Unzip Terraform
+      unarchive:
+        src: /tmp/terraform.zip
+        dest: /usr/local/bin
+        remote_src: yes
+      when: terraform_download.changed
+    
+    - name: Add Jenkins user to docker group
+      user:
+        name: jenkins
+        groups: docker
+        append: yes
+      become: true
+    
+    - name: Configure Jenkins init script
+      template:
+        src: templates/jenkins-init.groovy.j2
+        dest: /var/lib/jenkins/init.groovy.d/security.groovy
+        owner: jenkins
+        group: jenkins
+        mode: '0644'
+      when: jenkins_initial_password is defined
