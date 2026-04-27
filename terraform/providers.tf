@@ -8,9 +8,9 @@ terraform {
   }
 
   backend "s3" {
-    bucket         = "your-terraform-state-bucket"  # Replace with your S3 bucket
+   bucket          = "lucky-terraform-state-12345"  # Replace with your S3 bucket
     key            = "dev/microservices-project/terraform.tfstate"
-    region         = "eu-west-2"
+    region         = "us-east-1"
     encrypt        = true
     dynamodb_table = "terraform-locks"  # Optional, for locking
   }
