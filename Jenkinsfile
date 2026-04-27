@@ -115,8 +115,6 @@ pipeline {
                     kubectl get svc -n default
                 '''
             }
-            }
-        }
         }
     }
 
