@@ -1,66 +1,126 @@
+// Microservices Deployment Pipeline - SIMPLIFIED
 pipeline {
     agent any
 
     environment {
         AWS_REGION = 'us-east-1'
-        DOCKER_IMAGE_TAG = "${env.BUILD_NUMBER}"
         CLUSTER_NAME = 'dev-microservices-cluster'
+        DOCKER_IMAGE_TAG = "${env.BUILD_NUMBER}"
+        ECR_REGISTRY = credentials('ecr-registry-url')
     }
 
     parameters {
-        choice(name: 'ACTION', choices: ['plan', 'apply', 'destroy'], description: 'Terraform action')
-        choice(name: 'SERVICE', choices: ['all', 'order-service', 'user-service'], description: 'Service')
-        booleanParam(name: 'SKIP_INFRA', defaultValue: true, description: 'Skip infra (keep true for now)')
+        choice(name: 'SERVICE', choices: ['all', 'order-service', 'user-service'], description: 'Select service(s) to deploy')
     }
 
     stages {
-
         stage('Checkout') {
             steps {
-                echo 'Cloning repo...'
                 checkout scm
-            }
-        }
-
-        stage('Install Basic Tools') {
-            steps {
-                sh '''
-                    sudo apt update -y
-                    sudo apt install -y unzip curl
-                '''
             }
         }
 
         stage('Build Docker Images') {
             steps {
                 script {
-                    def services = params.SERVICE == 'all' ?
-                        ['order-service', 'user-service'] :
+                    def services = params.SERVICE == 'all' ? 
+                        ['order-service', 'user-service'] : 
                         [params.SERVICE]
 
                     services.each { service ->
                         dir(service) {
-                            echo "Building ${service}..."
-                            sh """
-                                docker build -t ${service}:${DOCKER_IMAGE_TAG} .
-                            """
+                            sh "docker build -t ${service}:${DOCKER_IMAGE_TAG} ."
                         }
                     }
                 }
             }
         }
 
-        stage('Verify Docker Images') {
+        stage('Push to ECR') {
             steps {
-                sh 'docker images'
+                script {
+                    def services = params.SERVICE == 'all' ? 
+                        ['order-service', 'user-service'] : 
+                        [params.SERVICE]
+
+                    withAWS(region: env.AWS_REGION, credentials: 'aws-credentials') {
+                        sh '''
+                            aws ecr get-login-password --region ${AWS_REGION} | \
+                            docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                        '''
+
+                        services.each { service ->
+                            sh '''
+                                docker tag ${service}:${DOCKER_IMAGE_TAG} \
+                                    ${ECR_REGISTRY}/${service}:${DOCKER_IMAGE_TAG}
+                                docker push ${ECR_REGISTRY}/${service}:${DOCKER_IMAGE_TAG}
+                                docker push ${ECR_REGISTRY}/${service}:latest
+                            '''
+                        }
+                    }
+                }
             }
+        }
+
+        stage('Update Manifests') {
+            steps {
+                script {
+                    def services = params.SERVICE == 'all' ? 
+                        ['order-service', 'user-service'] : 
+                        [params.SERVICE]
+
+                    services.each { service ->
+                        sh '''
+                            sed -i "s|image: .*|image: ${ECR_REGISTRY}/${service}:${DOCKER_IMAGE_TAG}|" \
+                                k8s/${service}-deployment.yaml
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to EKS') {
+            steps {
+                script {
+                    def services = params.SERVICE == 'all' ? 
+                        ['order-service', 'user-service'] : 
+                        [params.SERVICE]
+
+                    withAWS(region: env.AWS_REGION, credentials: 'aws-credentials') {
+                        sh '''
+                            aws eks update-kubeconfig \
+                                --name ${CLUSTER_NAME} \
+                                --region ${AWS_REGION}
+                        '''
+
+                        services.each { service ->
+                            sh '''
+                                kubectl apply -f k8s/${service}-deployment.yaml
+                                kubectl rollout status deployment/${service} \
+                                    -n default --timeout=5m
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                sh '''
+                    echo "=== Pods Status ==="
+                    kubectl get pods -n default
+                    echo ""
+                    echo "=== Services Status ==="
+                    kubectl get svc -n default
+                '''
+            }
+            }
+        }
         }
     }
 
     post {
-        success {
-            echo 'Pipeline completed successfully!'
-        }
         failure {
             echo 'Pipeline failed!'
         }

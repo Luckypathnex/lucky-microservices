@@ -1,0 +1,106 @@
+// Infrastructure Provisioning Pipeline
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = 'us-east-1'
+        CLUSTER_NAME = 'dev-microservices-cluster'
+    }
+
+    parameters {
+        choice(name: 'ACTION', choices: ['plan', 'apply', 'destroy'], description: 'Terraform action')
+        string(name: 'ENVIRONMENT', defaultValue: 'dev', description: 'Environment name')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                echo '=== Checking out source code ==='
+                checkout scm
+            }
+        }
+
+        stage('Terraform Init') {
+            steps {
+                dir('terraform') {
+                    withAWS(region: env.AWS_REGION, credentials: 'aws-credentials') {
+                        sh '''
+                            terraform init -upgrade
+                            terraform workspace select ${ENVIRONMENT} || terraform workspace new ${ENVIRONMENT}
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Validate') {
+            steps {
+                dir('terraform') {
+                    sh 'terraform validate'
+                }
+            }
+        }
+
+        stage('Terraform Plan') {
+            when {
+                expression { params.ACTION == 'plan' }
+            }
+            steps {
+                dir('terraform') {
+                    withAWS(region: env.AWS_REGION, credentials: 'aws-credentials') {
+                        sh '''
+                            terraform plan -out=tfplan \
+                                -var="environment=${ENVIRONMENT}" \
+                                -var="region=${AWS_REGION}"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Apply') {
+            when {
+                expression { params.ACTION == 'apply' }
+            }
+            steps {
+                dir('terraform') {
+                    withAWS(region: env.AWS_REGION, credentials: 'aws-credentials') {
+                        sh '''
+                            terraform apply -auto-approve tfplan \
+                                -var="environment=${ENVIRONMENT}" \
+                                -var="region=${AWS_REGION}"
+                            
+                            aws eks update-kubeconfig \
+                                --name ${CLUSTER_NAME} \
+                                --region ${AWS_REGION}
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Destroy') {
+            when {
+                expression { params.ACTION == 'destroy' }
+            }
+            steps {
+                dir('terraform') {
+                    input message: 'Confirm infrastructure destruction?', ok: 'Destroy'
+                    withAWS(region: env.AWS_REGION, credentials: 'aws-credentials') {
+                        sh '''
+                            terraform destroy -auto-approve \
+                                -var="environment=${ENVIRONMENT}" \
+                                -var="region=${AWS_REGION}"
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}
