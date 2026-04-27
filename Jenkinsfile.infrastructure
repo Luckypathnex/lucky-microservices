@@ -13,6 +13,7 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout') {
             steps {
                 echo '=== Checking out source code ==='
@@ -43,7 +44,7 @@ pipeline {
 
         stage('Terraform Plan') {
             when {
-                expression { params.ACTION == 'plan' }
+                expression { params.ACTION == 'plan' || params.ACTION == 'apply' }
             }
             steps {
                 dir('terraform') {
@@ -66,10 +67,10 @@ pipeline {
                 dir('terraform') {
                     withAWS(region: env.AWS_REGION, credentials: 'aws-credentials') {
                         sh '''
-                            terraform apply -auto-approve tfplan \
-                                -var="environment=${ENVIRONMENT}" \
-                                -var="region=${AWS_REGION}"
-                            
+                            terraform apply -auto-approve tfplan
+                        '''
+
+                        sh '''
                             aws eks update-kubeconfig \
                                 --name ${CLUSTER_NAME} \
                                 --region ${AWS_REGION}
@@ -85,7 +86,8 @@ pipeline {
             }
             steps {
                 dir('terraform') {
-                    input message: 'Confirm infrastructure destruction?', ok: 'Destroy'
+                    input message: '⚠️ Confirm infrastructure destruction?', ok: 'Destroy'
+
                     withAWS(region: env.AWS_REGION, credentials: 'aws-credentials') {
                         sh '''
                             terraform destroy -auto-approve \
